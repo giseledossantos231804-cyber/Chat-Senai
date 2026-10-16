@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avaliação Geral do Curso de Formação I</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .fade-in { animation: fadeIn 0.4s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        body { user-select: none; -webkit-user-select: none; }
+        /* Bloquear print via CSS */
+        @media print { body { display: none !important; } }
+
+        /* Barra de progresso */
+        .progress-bar-inner { transition: width 0.4s ease; }
+
+        /* Navegação lateral de questões */
+        .q-nav-btn { transition: all 0.15s; }
+        .q-nav-btn.answered { background: #2563EB; color: #fff; }
+        .q-nav-btn.current { ring: 2px solid #2563EB; outline: 2px solid #2563EB; }
+        .q-nav-btn.flagged { background: #F59E0B; color: #fff; }
+
+        /* Overlay fraude */
+        #fraud-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(15,23,42,0.97);
+            z-index: 99999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-align: center;
+            padding: 2rem;
+        }
+        #fraud-overlay.active { display: flex; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center font-sans">
+
+<!-- OVERLAY ANTI-FRAUDE -->
+<div id="fraud-overlay">
+    <i class="fas fa-shield-alt text-6xl text-red-400 mb-6"></i>
+    <h2 class="text-3xl font-bold mb-3">⚠️ Atividade Suspeita Detectada</h2>
+    <p class="text-gray-300 max-w-md mb-2" id="fraud-reason">Você saiu da tela da prova.</p>
+    <p class="text-gray-400 text-sm mb-8">Esta tentativa foi <strong class="text-red-400">registrada e reportada</strong>. Retorne à avaliação imediatamente.</p>
+    <button onclick="closeFraudOverlay()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-8 py-3 rounded-xl shadow-lg">
+        <i class="fas fa-arrow-left mr-2"></i> Retornar à Prova
+    </button>
+</div>
+
+<div id="app-container" class="bg-white w-full max-w-3xl rounded-xl shadow-2xl overflow-hidden m-4 fade-in">
+    <div class="bg-blue-600 p-6 text-white text-center">
+        <h1 class="text-2xl font-bold uppercase tracking-wider">Avaliação Geral do Curso de Formação I</h1>
+        <p class="text-blue-100 text-sm mt-1">Sistema de Avaliação Online · 2026</p>
+    </div>
+    <div id="content" class="p-6 md:p-8"></div>
+</div>
+
+<script>
+// =============================================================================
+// SEGURANÇA: Respostas armazenadas como hash SHA-256.
+// Nenhuma resposta em texto puro fica acessível no runtime normal.
+// =============================================================================
+
+// Função de hash SHA-256 assíncrona (Web Crypto API nativa)
+async function sha256(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Semente de salt derivada de fingerprint de sessão (dificulta precomputação)
+const SESSION_SALT = (function() {
+    const nav = navigator.userAgent + navigator.language + screen.width + screen.height;
+    let hash = 0;
+    for (let i = 0; i < nav.length; i++) {
+        const char = nav.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+})();
+
+// Cache de hashes (precomputados ao iniciar o quiz)
+const answerHashes = {};
+
+async function precomputeHashes(questions) {
+    for (const q of questions) {
+        answerHashes[q.id] = await sha256(SESSION_SALT + q._correct);
+    }
+}
+
+async function checkAnswer(questionId, userAnswer) {
+    const userHash = await sha256(SESSION_SALT + userAnswer);
+    return userHash === answerHashes[questionId];
+}
+
+// =============================================================================
+// DADOS DA PROVA — correct armazenado em _correct (será hasheado e removido)
+// =============================================================================
+const rawQuestions = [
+    { id:'q1', text:'Dos objetivos da Entidade para com o guarda mirim não é correto afirmar que haverá:', options:['Integração harmoniosa entre o grupo em si e a sociedade.','Programa de acompanhamento e desenvolvimento físico, psíquico, social, cultural, educacional e moral.','Aulas de reforço às disciplinas escolares regulares.','Desintegração harmoniosa entre o grupo em si e a sociedade.','Incentivo ao estudo regular.'], _correct:'Desintegração harmoniosa entre o grupo em si e a sociedade.', points:1 },
+    { id:'q2', text:'Não são critérios para admissão de um adolescente na GUARDA MIRIM:', options:['Estar cursando no mínimo o último ano do Ensino Fundamental.','Ter idade de 15 a 18 anos.','Prática voluntária de esporte para preservação da saúde.','Ter comportamento, assiduidade e aproveitamento escolar satisfatório.','Ser autorizado pelos pais ou responsáveis legais.'], _correct:'Prática voluntária de esporte para preservação da saúde.', points:1 },
+    { id:'q3', text:'Com base nas informações contidas no artigo IV do Regulamento Interno, que fala sobre o Curso de Formação Inicial, está correta a seguinte alternativa, exceto:<br>I. Terá duração entre 80 e 180 dias.<br>II. Funcionará na sede da AMO-SIM e fora dela.<br>III. Atingirá 600 (seiscentos) adolescentes admitidos para os cursos anuais de formação inicial.<br>IV. Terá currículo organizado por pedagogo e conterá disciplinas voltadas à qualificação profissional e ao desenvolvimento moral, social, cívico, físico, cultural e disciplinar, com aulas específicas de língua portuguesa, matemática, regimento interno, educação física, também podendo ser ministrados através de palestras, não prejudicando a grade curricular, conforme subprojetos.', options:['O item I está correto.','Os itens I, II, e IV estão incorretos.','Os itens I, II, III e IV estão incorretos.','Os itens I,II, III e IV estão corretos.','O item I está incorreto.'], _correct:'O item I está incorreto.', points:1 },
+    { id:'q4', text:'O guarda mirim uma vez que ele esteja na empresa tem o dever de frequentar todos os dias e em caso de falta deve estar amparado por atestado de médico ou de óbito de alguém da família. O Texto acima está se referindo a:', options:['Assiduidade','Aproveitamento escolar satisfatório','Comportamento','Obrigação de assistir programa de televisão todos os dias','Caducidade'], _correct:'Assiduidade', points:1 },
+    { id:'q5', text:'As alternativas abaixo descrevem obrigações de todos os Guardas Mirins, exceto:', options:['Frequentar com assiduidade as atividades educacionais e formadoras, tanto na entidade quanto nas empresas em que estiverem participando do programa de aprendizagem profissional.','Matricular-se e frequentar escola regular.','Dedicar-se aos estudos.','Chamar a atenção em público de guardas mirins que estão descumprindo as normas do Regulamento Interno.','Cumprir fielmente e fazer cumprir as regras de conduta estabelecidas.'], _correct:'Chamar a atenção em público de guardas mirins que estão descumprindo as normas do Regulamento Interno.', points:1 },
+    { id:'q6', text:'O guarda mirim Adriano que mora com os pais ficou enfermo (doente) e esteve impossibilitado de comparecer na Empresa ou na AMO-SIM para entrega do atestado. Diante do exposto o GM deverá:', options:['Esperar melhorar de saúde para proceder a entrega do atestado.','Entregar o mais rápido possível conforme manda a Lei da CLT.','Entregar o mais rápido possível conforme manda a Lei de Trânsito.','Entregar mesmo doente dentro de 34 horas.','Solicitar para que os pais ou outra pessoa de confiança faça a entrega do atestado em até 24h.'], _correct:'Solicitar para que os pais ou outra pessoa de confiança faça a entrega do atestado em até 24h.', points:1 },
+    { id:'q7', text:'O guarda mirim Paulo, que já está no décimo quarto mês, ou seja, no término de contrato, vendo a oportunidade de ser registrado pela empresa começou a desobedecer às normas do Regulamento Interno pois, se sentia seguro e que não mais precisava da GUARDA MIRIM para nada. Não frequentava mais os cursos semanais, nem fazia uso regular do seu uniforme e ainda, de forma acintosa usava correntes, o que sabia ser um acessório proibido para um guarda mirim em serviço e piercing. Foi verificado na empresa e o retorno que foi obtido é que ele era um funcionário exemplar. Diante da situação acima exemplificada a GUARDA MIRIM resolveu por unanimidade no Conselho Disciplinar efetivar o desligamento do guarda mirim por não cumprimento das normas internas. Essa afirmativa, esse posicionamento, essa decisão do Conselho Disciplinar conforme o que você conhece do regulamento foi:', options:['Certa, pois nesse caso se trata de desligamento e não de demissão.','Errada, pois nesse caso não se trata de desligamento e sim de demissão.','Errada, pois nesse caso não se trata de desligamento, nem de demissão.','Assertiva, pois realmente é motivo de desligamento.','Incorreta, pois nenhuma das decisões mencionadas no texto são previstas no Regulamento Interno.'], _correct:'Errada, pois nesse caso não se trata de desligamento e sim de demissão.', points:1 },
+    { id:'q8', text:'Dedicação aos estudos se refere a um dos artigos mencionados no Regulamento Interno. Com base nessa afirmativa em qual das alternativas abaixo se enquadra o referido termo em destaque?', options:['Trata-se de um comportamento de boa educação, portanto, está contido no artigo que fala dos bons modos, o artigo 99 do Regulamento Interno.','Trata-se de um dever e um direito simultaneamente.','Trata-se de um direito, portanto, está contido no artigo que fala dos direitos.','Trata-se de um favor, portanto, está contido no artigo que fala dos direitos.','Trata-se de um dever portanto, está contido no artigo que fala dos deveres.'], _correct:'Trata-se de um dever portanto, está contido no artigo que fala dos deveres.', points:1 },
+    { id:'q9', text:'O guarda mirim Palato, é aluno nota 10 na escola onde estuda, porém, em razão de ter faltado às aulas para assistir aos jogos da copa do mundo acabou sendo reprovado, perdendo o ano letivo por não ter tido aproveitamento escolar satisfatório, conforme previsto no regulamento interno. Diante desta situação, é correto afirmar que o Conselho Disciplinar deverá:', options:['Não tomar qualquer decisão de desligamento ou demissão em virtude que o referido guarda mirim é aluno nota 10.','Poderá efetivar o desligamento do guardinha uma vez que foi reprovado por excesso de faltas sendo que, isso é previsto no regulamento interno.','Deverá efetivar o desligamento do guarda mirim uma vez que foi aprovado pelo excesso de faltas, sendo que isto está previsto no regulamento interno da entidade.','Deverá efetivar a sua demissão uma vez que foi reprovado pelo excesso de faltas, não importando que todas as suas notas sejam excelentes.','Nenhuma das alternativas acima estão corretas.'], _correct:'Deverá efetivar a sua demissão uma vez que foi reprovado pelo excesso de faltas, não importando que todas as suas notas sejam excelentes.', points:1 },
+    { id:'q10', text:'A guarda mirim Ana Paula estava trabalhando em uma empresa no departamento pessoal onde ajudava a chefe deste a elaborar e imprimir todos os holerites dos funcionários para o pagamento de salários, que acontece até o dia 10 de cada mês. Ana Paula tem conhecimento de assuntos sigilosos da empresa, pois tem conhecimento do salário de cada um dos funcionários. Em um determinado dia em que estava sozinha, ela tirou um print da tela do computador onde lançava o salário de cada funcionário, justamente o do presidente da empresa e divulgou em suas redes sociais. Com base no artigo 13 do Regulamento Interno, Ana Paula cometeu a seguinte infração disciplinar:', options:['Cometeu apenas uma falta de compromisso com seus deveres.','Cometeu a infração de violação de segredo da empresa.','Não cometeu infração nenhuma.','Violação de segredo pessoal.','Publicação de segredo profissional.'], _correct:'Cometeu a infração de violação de segredo da empresa.', points:1 },
+    { id:'q11', text:'Qual a composição correta do uniforme do guarda mirim formado do gênero masculino:', options:['Tênis azul escuro, meia preta, calça jeans azul, cinto de plástico azul, camiseta azul sem nome, boné oficial do guarda mirim.','Tênis azul escuro, meia preta, calça jeans azul cinto de couro apenas preto, camiseta azul sem nome, boné oficial do guarda mirim.','Tênis azul escuro, meia preta, calça jeans azul cinto de lona apenas preto, camiseta azul sem nome, boné oficial do guarda mirim.','Tênis azul claro, meia preta, calça jeans azul cinto de couro preto, camiseta azul sem nome, boné oficial do guarda mirim.','Tênis preto, meia preta, calça jeans azul, cinto de couro ou lona preto, camiseta azul com nome, boné oficial do guarda mirim.'], _correct:'Tênis preto, meia preta, calça jeans azul, cinto de couro ou lona preto, camiseta azul com nome, boné oficial do guarda mirim.', points:1 },
+    { id:'q12', text:'O guarda mirim José passou mal no trabalho e foi conduzido até a unidade de pronto atendimento (UPA) para receber socorro médico. Após examiná-lo, o médico deu 3 dias de afastamento do trabalho, em virtude da moléstia apresentada por José. O guarda mirim percebeu que facilmente conseguiria manipular o número 3 fechando-o, transformando-o no número 8 e optou por fazer alteração que daria a ele 8 dias de afastamento em vez de 3 dias. Conhecedor do Regulamento, José entregou em menos de 24 horas do seu primeiro dia de afastamento o atestado médico no departamento pessoal, que logo detectou a irregularidade na quantidade de dias que o médico havia legalmente afastado José das suas atividades laborais. Com base nesta divergência, José foi chamado para esclarecer as dúvidas que pairavam sobre a autenticidade do atestado e, em virtude de não ter uma justificativa convincente, foi encaminhado ao Conselho Disciplinar para ser submetido a avaliação de possibilidade de demissão. Diante do que você conhece do Regulamento Interno José cometeu um crime e deve ser demitido por:', options:['Falsidade ideológica.','Falsificação de posicionamento médico.','Falsificação de atestado médico.','Falsidade pessoal.','Falsidade de atestado de hospital de pessoas com problemas mentais.'], _correct:'Falsidade ideológica.', points:1 },
+    { id:'q13', text:'Pelo que você aprendeu através do regulamento interno durante o tempo que passou no curso de formação e também na vivência do dia a dia, sobre uso de adereços junto com o uniforme do guarda mirim, é correto afirmar que:', options:['Os únicos adereços permitidos para o guardinha durante todo o tempo que fica na Guarda Mirim é somente um relógio, uma corrente discreta com simbologia de fé. Não sendo permitido para os meninos e meninas uso de piercing. E, somente as meninas são autorizadas a fazer uso de brinco discreto e pequeno.','Podem ser usados por ambos os sexos qualquer tipo de adereço com os quais se identificarem sobre o uniforme.','Somente os meninos podem fazer uso de piercing e brincos e as meninas somente de piercing.','Nem os guardas mirins do sexo masculino e femininos podem usar qualquer adereço durante o uso do uniforme.','Todas as alternativas acima estão corretas e permitidas pelo regulamento interno.'], _correct:'Nem os guardas mirins do sexo masculino e femininos podem usar qualquer adereço durante o uso do uniforme.', points:1 },
+    { id:'q14', text:'Leia atentamente a seguinte história hipotética: "Após o término de um dia de aula para os alunos da guarda mirim, dois alunos do curso de formação inicial entraram em luta corporal a duas quadras da Entidade, sendo que, um deles levou a pior sofrendo escoriações em ambos os braços. No dia seguinte, o guarda mirim que havia \'apanhado\' arregimentou mais alguns amigos e foram na escola daquele que o agrediu e devolveu a surra que havia recebido". Diante do fato apresentado, os 2 alunos serão submetidos ao Conselho Disciplinar da Guarda Mirim que, com base naquilo que você aprendeu sobre legítima defesa deverá:', options:['Demitir os 2, pois nenhum faz jus a ampla defesa.','Chamar os pais dos 2 alunos envolvidos com os alunos e dar uma bronca nos 4.','Desligar os 2, pois nenhum faz jus a ampla defesa.','Desligar somente o guarda mirim que agrediu primeiro.','As alternativas A e C estão corretas.'], _correct:'Desligar os 2, pois nenhum faz jus a ampla defesa.', points:1 },
+    { id:'q15', text:'O guarda mirim Paulo Baião foi surpreendido pela polícia militar, no interior da escola onde estuda com uma porção de droga dentro da bolsa. Após a localização do referido entorpecente os policiais conduziram Paulo Baião até a delegacia onde reconheceu que a droga era sua e foi preso em flagrante por porte de entorpecente. Pelo que você conhece do Regulamento Interno, Paulo Baião será:', options:['Desligado.','Demitido.','Receberá uma bronca.','Será expulso.','Será apenas advertido e permanecerá na Guarda Mirim.'], _correct:'Demitido.', points:1 },
+    { id:'q16', text:'Ao colocar o pelotão em forma, antes de cada comando é necessário o uso da seguinte expressão:', options:['Fique atento pelotão.','Sentido somente.','Atenção pelotão.','Sentido pelotão.','Firme.'], _correct:'Atenção pelotão.', points:1 },
+    { id:'q17', text:'Ao colocar o pelotão em forma e determinar o alinhamento e a cobertura, é definido que o alinhamento é pela _____ e a cobertura é para _____:', options:['Direita e para trás.','Esquerda e para frente.','A esquerda e para trás.','Direita e para frente.','Nenhuma das alternativas.'], _correct:'Direita e para frente.', points:1 },
+    { id:'q18', text:'Quando o pelotão está em forma em um total de 4 colunas, uma delas fica desigual sobrando apenas um componente em uma das colunas. Diante desta afirmação o aluno que está a mais deverá ser remanejado para qual das colunas?', options:['Para a coluna número 1.','Para a coluna número 2.','Para a coluna número 3.','Para a coluna número 4.','Nenhuma das alternativas.'], _correct:'Para a coluna número 4.', points:1 },
+    { id:'q19', text:'Analise a seguinte situação e aponte a resposta correta: O pelotão está sob o comando de marcar passo e você quer que esse movimento seja cessado. Qual é o pé que ao bater no chão você dará o comando de "alto"?', options:['O comando deve ser dado quando o pé direito estiver em cima.','O comando deve ser dado quando o pé direito estiver em baixo.','O comando deve ser dado quando o pé esquerdo estiver embaixo.','O comando deve ser dado quando o pé esquerdo estiver em cima.','O comando deve ser dado quando ambos os pés estiverem embaixo.'], _correct:'O comando deve ser dado quando o pé esquerdo estiver embaixo.', points:1 },
+    { id:'q20', text:'Quando o comandante do pelotão está defronte ao grupo, sendo que os maiores dos componentes estão à sua frente, a coluna número 1 será a que estará à sua...', options:['Direita.','Esquerda.','Centro.','Frontal.','Nenhuma das alternativas.'], _correct:'Centro.', points:1 },
+    { id:'q21', text:'O instrutor chega para o graduado e diz que é para ele virar a frente do pelotão de forma que os menores componentes do grupo fiquem como sendo as testas do pelotão, porém, o pelotão já está na posição de sentido e esta posição não poderá ser alterada. Diante da afirmativa, qual deve ser o comando a ser dado pelo graduado?', options:['De frente para o centro.','Frente para a direita.','Meia volta volver.','Frente para esquerda.','Frente para a retaguarda.'], _correct:'Frente para a retaguarda.', points:1 },
+    { id:'q22', text:'O pelotão está em forma e o instrutor determina que o graduado coloque o pelotão em sala de aula. Para que essa determinação seja cumprida ele, após os comandos iniciais de sentido, cobrir e firme, deverá obrigatoriamente comandar:', options:['Atenção pelotão base a primeira coluna, em direção à sala de aula sem cadência Marche!','Atenção pelotão base a segunda coluna, em direção à sala de aula sem cadência Marche!','Atenção pelotão base a terceira coluna, em direção à sala de aula sem cadência Marche!','Atenção pelotão base a quarta coluna, em direção à sala de aula com cadência Marche!','Nenhuma das alternativas, pois ele poderá, a seu critério, escolher qual deve ser a primeira coluna a se deslocar rumo ao objetivo deste comando.'], _correct:'Atenção pelotão base a primeira coluna, em direção à sala de aula sem cadência Marche!', points:1 },
+    { id:'q23', text:'Chegou o momento de começar as atividades na AMO-SIM e o graduado ou chefe de turma, pouco antes do horário definido foram avisados pela secretária da Instituição que o Instrutor não poderá estar presente naquele dia. Diante dessa informação quais devem ser as atitudes dos líderes acima mencionado.', options:['Chamar qualquer adulto da Guarda Mirim para tomar as demais providências.','Deve pedir para que o pelotão, sem entrar em forma, dirija-se para suas atividades.','Deve pedir para que o pelotão entre em forma e fique aguardando o Instrutor.','Deve tocar o sinal, não conferir o pelotão e verificar com a administração qual o destino do grupo.','Deve tocar o sinal, colocar o pelotão em forma, efetuar a conferência e verificar com a administração qual o destino do grupo, caso não tenha conhecimento disso.'], _correct:'Deve tocar o sinal, colocar o pelotão em forma, efetuar a conferência e verificar com a administração qual o destino do grupo, caso não tenha conhecimento disso.', points:1 },
+    { id:'q24', text:'Durante os comandos de ordem unida são pronunciadas palavras-chave com a correta entonação para que o pelotão possa executar de forma eficaz. Quanto ao comando de descansar, aponte a alternativa onde se dá ênfase necessária para a correta execução:', options:['Atenção pelotão... Descansar!','Atenção pelotão... Descan...sar!','Atenção pelotão... Des....cansar!','Atenção pelotão... Des...cansar!','Nenhuma das alternativas.'], _correct:'Atenção pelotão... Des....cansar!', points:1 },
+    { id:'q25', text:'Qual é a finalidade para que os guardas mirins sejam promovidos através de avaliação pessoal de nível intelectual e de liderança em relação à instituição?', options:['Apenas para promoção pessoal e elevação do ego.','Para ajudar na manutenção e preservação da disciplina somente fora da Guarda.','Para ajudar na manutenção e preservação da disciplina e ainda promoção pessoal do guarda mirim.','Para que os mais graduados exerçam exclusivamente poder disciplinar sobre outros guardas mirins.','Nenhuma das alternativas acima.'], _correct:'Para ajudar na manutenção e preservação da disciplina e ainda promoção pessoal do guarda mirim.', points:1 },
+    { id:'q26', text:'Um graduado presencia outro guarda mirim em uma infração disciplinar de natureza grave e desonrosa, através da qual todos os demais guardas mirins são atingidos por aquele mau comportamento. Diante do acima exposto qual é a atitude mais correta a ser tomada pelo graduado?', options:['Dirigir-se até o guardadinha infrator fazendo com que cesse suas atitudes de mau exemplo.','Chamar o apoio, caso haja de outros guardas mirins que estudam na mesma escola para compelir aquele guarda mirim e fazer cessar sua má conduta.','Apenas observar e assim que possível levar ao conhecimento dos instrutores exigindo o desligamento imediato daquele guarda mirim.','Apenas observar para que depois aquele fato seja comentado durante os dias de curso na sede da entidade.','Observar atentamente anotando palavras, atos e tornar conhecido do setor disciplinar o mais rápido possível.'], _correct:'Observar atentamente anotando palavras, atos e tornar conhecido do setor disciplinar o mais rápido possível.', points:1 },
+    { id:'q27', text:'São valores fundamentais aos quais devem ser um estandarte na vida de um guarda mirim graduado. Aponte em qual das alternativas abaixo todos os valores mencionados são valores fundamentais, segundo o Regulamento Interno para os graduados.', options:['Amor à pátria, desprezo, patriotismo, honra.','Patriotismo, ódio, lealdade, honra, amor à pátria.','Disciplina, civismo, lealdade, honra, amor à pátria.','Honra, disciplina, amor à pátria, fumante, briguento.','Patriotismo, lealdade, honra, desonra, disciplina.'], _correct:'Disciplina, civismo, lealdade, honra, amor à pátria.', points:1 },
+    { id:'q28', text:'As graduações na guarda mirim partem de cabo guarda mirim até coronel guarda mirim. Da graduação de cabo guarda mirim até subtenente guarda mirim são conhecidos como os praças e em relação às insígnias que usam, qual é o tipo pertencente a este grupo?', options:['Subtenente até coronel usa-se divisas.','Cabo até subcapitão usa-se patente.','De cabo até subtenente usa-se divisa.','De cabo até capitão usa-se patente.','Nenhuma das alternativas acima está correta.'], _correct:'De cabo até subtenente usa-se divisa.', points:1 },
+    { id:'q29', text:'Para que o pelotão fique em condições de receber a instrução faz-se necessário, a partir do momento que entram em forma, uma sequência lógica de comandos. Aponte qual das alternativas abaixo apresenta a sequência correta.', options:['Sentido, atenção, cobrir, descansar, firme, à vontade.','Atenção, cobrir, firme, sentido, descansar, à vontade.','Atenção, descansar, sentido, cobrir, firme, à vontade.','Atenção, sentido, firme, descansar, à vontade, cobrir.','Atenção, sentido, cobrir, firme, descansar, à vontade.'], _correct:'Atenção, sentido, cobrir, firme, descansar, à vontade.', points:1 },
+    { id:'q30', text:'Imagine a seguinte situação: o pelotão já está em forma sob o comando do graduado e um guarda mirim que teve problema com o transporte chega atrasado, logo, ele precisa pedir autorização para que possa ser incorporado junto ao pelotão. Para isso ele precisa falar a frase correta. Aponte dentre as alternativas abaixo qual é a frase que se enquadra corretamente para esta solicitação.', options:['Com licença, GM Bertão permissão para entrar em forma.','Dá licença, GM Bertão permissão para entrar em forma.','Com vossa licença, GM Bertão permissão para sair de forma.','Com licença, GM Bertão permissão para entrar no pelotão.','Com licença, GM Bertão permissão para tomar um lanche.'], _correct:'Com licença, GM Bertão permissão para entrar em forma.', points:1 },
+    { id:'q31', text:'Em qual data é comemorado o dia da Bandeira do Brasil?', options:['19 de novembro.','13 de abril.','21 de abril.','24 de junho.','25 de dezembro.'], _correct:'19 de novembro.', points:1 },
+    { id:'q32', text:'Nos diplomas emitidos por estabelecimentos oficiais de ensino o governo usa para autenticar seus atos o símbolo nacional:', options:['Brasão de Armas Nacional.','Hino Nacional.','Selo Nacional.','Carimbo Brasileiro.','Testamento Nacional.'], _correct:'Brasão de Armas Nacional.', points:1 },
+    { id:'q33', text:'Tratar as pessoas com respeito, não falar palavrão, não praticar atos obscenos em lugares impróprios, não tirar proveito de pessoas incapazes ou despreparadas, são exemplos de comportamento:', options:['Moral.','Imoral.','Amoral.','Desobediente.','Desonesto.'], _correct:'Moral.', points:1 },
+    { id:'q34', text:'A definição de Moral é:', options:['Conjunto de preceitos e regras que estabelecidos e admitidos por uma sociedade, regulam o comportamento de quem dela faz parte.','Conjunto de leis, estabelecidas pela polícia que devem ser cumpridas por todos que vivem nas cidades.','Conjunto de normas e leis, que após serem analisadas, desregulam o comportamento a ser seguido por um indivíduo.','Conjunto de regras e normas, que todos devem cumprir em respeito ao presidente.','Nenhuma das alternativas.'], _correct:'Conjunto de preceitos e regras que estabelecidos e admitidos por uma sociedade, regulam o comportamento de quem dela faz parte.', points:1 },
+    { id:'q35', text:'De acordo com o que foi estudado no Regulamento Interno em quais lugares o GM é empregado durante o tempo de contrato?', options:['Fica na Zona Azul desde o início até o fim do Contrato.','Em qualquer tipo de serviço, sendo obrigado a fazer horas extras.','O aprendiz é registrado pela AMO SIM e presta estágio em empresas parceiras.','Em empresas que o obriguem a executar trabalho noturno, das 22h às 5h.','Em qualquer empresa que ele desejar, de acordo com suas habilidades.'], _correct:'O aprendiz é registrado pela AMO SIM e presta estágio em empresas parceiras.', points:1 },
+    { id:'q36', text:'Elisa está pesquisando uma televisão nova para sua sala e encontrou uma promoção em uma loja de eletrodomésticos. O aparelho pode ser comprado nas seguintes condições: <br><b>À vista: R$ 1.350,00 ou A prazo: 12 parcelas de R$ 138,50.</b> <br>Se Elisa optar pelo pagamento parcelado, quanto pagará a mais em relação ao valor à vista?', options:['R$ 302,00','R$ 312,00','R$ 302,50','R$ 310,50','R$ 315,20'], _correct:'R$ 312,00', points:1 },
+    { id:'q37', text:'Alessandro saiu de casa e foi ao mercado a pedido de sua mãe para comprar algumas coisas. A mãe de Alessandro deu-lhe uma nota de R$ 200,00 e uma lista com os seguintes itens: <br>3 kg de arroz<br>2 kg de feijão<br>4 kg de batatas<br>Por fim, pediu para que guardasse o troco e o devolvesse, pois ainda tinha outras despesas. Veja os preços dos produtos por kg: <br>1 kg de arroz R$ 14,40;<br>1 kg de feijão R$ 7,30<br>1 kg de batatas R$ 4,75. <br>Marque a opção que representa a quantia do troco que Alessandro devolveu para sua mãe.', options:['R$ 123,20','R$ 122,30','R$ 121,20','R$ 120,20','R$ 122,20'], _correct:'R$ 123,20', points:1 },
+    { id:'q38', text:'Fazendo uma pesquisa sobre o preço de um forno elétrico, percebi que o valor aumentou. De R$ 400,00 aumentou 18%. Qual é o valor atual em R$ do forno elétrico?', options:['R$ 475,00','R$ 477,00','R$ 473,00','R$ 472,00','R$ 471,00'], _correct:'R$ 472,00', points:1 },
+    { id:'q39', text:'Comprei uma mala de viagem que custava R$375,00. Quando cheguei na loja, o vendedor me informou que a mala estava com 23,3% de desconto do valor antigo porque era aniversário da loja dia 23/03. Quanto paguei na mala?', options:['R$287,63','R$277,63','R$267,63','R$297,63','R$299,93'], _correct:'R$287,63', points:1 },
+    { id:'q40', text:'O pai de Mariana é construtor e pediu para ela ajudá-lo com alguns cálculos. Ele queria confirmar se os resultados que ele conseguiu estavam corretos. Quais os resultados para equações a seguir? <br>4,5 / 1,5<br>21,5 / 2<br>9,6 / 1,8', options:['3<br>10,75<br>5,33','10,75<br>5,33<br>3','3<br>1,075<br>53,33','1,075<br>3,53<br>5,33','3,33<br>1,750<br>53,0'], _correct:'3<br>10,75<br>5,33', points:1 },
+    { id:'q41', text:'(Unifenas) A mesma regra de acentuação que vale para <b>rápida</b>, vale também para:', options:['Mutável, estaríamos, vírgula, admissíveis','Vírgula, simbólica, símbolo, hieróglifos','Ortográficos, colégios, egípcios, língua','Piauí, pêssego, jiló, carbônico','Jatobá, estágio, tolerância, máquina'], _correct:'Vírgula, simbólica, símbolo, hieróglifos', points:1 },
+    { id:'q42', text:'(UTFPR) Em qual alternativa todas as palavras em negrito devem ser acentuadas graficamente?', options:['<b>Atraves</b> de uma lei municipal, <b>varias</b> pessoas recebem ingressos <b>gratis</b> para o cinema.','É <b>dificil</b> correr atrás do prejuízo <b>sozinho</b>, tenho muitas <b>dividas</b> para pagar.','<b>Aqui</b>, em Foz do Iguaçu, a dengue <b>esta</b> sendo um grande problema de <b>saude</b> pública.','É <b>impossivel</b> tolerar pessoas que <b>maltratam</b> animais, por isso devemos fazer <b>denuncia</b>.','O importante <b>e</b> não desistir dos seus sonhos, <b>persista</b> e faça a <b>diferença</b> em sua vida.'], _correct:'<b>Atraves</b> de uma lei municipal, <b>varias</b> pessoas recebem ingressos <b>gratis</b> para o cinema.', points:1 },
+    { id:'q43', text:'"Mauro é __________, não parece em nada com seu irmão que é ____________. Até mesmo na ___________ Mauro não consegue ir bem por causa de sua personalidade." Complete os espaços com as palavras escritas de acordo com a Nova Ortografia. Depois assinale a alternativa que corresponde com a sequência que você usou.', options:['Antissocial, hiper-risonho, auto-escola.','Anti-social, hiperrisonho, auto-escola.','Antissocial, hiper-risonho, autoescola.','Anti social, hiper risonho, auto escola.','Antissocial, hiperrisonho, autoescola.'], _correct:'Antissocial, hiper-risonho, autoescola.', points:1 },
+    { id:'q44', text:'Assinale a alternativa em que as palavras estejam grafadas de forma incorreta considerando a Nova Regra Ortográfica.', options:['Maria esqueceu um livro sobre ensino-aprendizagem na ante-sala da diretoria. Ela se distraiu procurando um anti-inflamatório na bolsa.','Comprei um micro-ondas novo. O vendedor disse que ele é super-resistente e tem garantia de 5 anos.','Super-homem é um dos meus super-heróis preferidos. Ele tem superpoderes e muita inteligência.','A infraestrutura da rodovia que liga o Paraná a Santa Catarina é exemplo para todo o país.','Ontem tivemos que ir para a escola de micro-ônibus, pois nosso ônibus quebrou.'], _correct:'Maria esqueceu um livro sobre ensino-aprendizagem na ante-sala da diretoria. Ela se distraiu procurando um anti-inflamatório na bolsa.', points:1 },
+    { id:'q45', text:'Complete as lacunas e assinale a alternativa correta: _____-humorado, _____ humor, fei____e, en_____ente, en_____ada.', options:['Ch, x, ch, mau, mal','Mau, mal, ch, ch, x','Mal, mau, ch, ch, ch','Mal, mau, x, ch, x','Mau, mau, ch, x, x'], _correct:'Mal, mau, x, ch, x', points:1 },
+    { id:'q46', text:'Complete as palavras usando S ou Z nos espaços: France_____a, marque_____a, leve_____a, traumati_____ar, pou_____ada, pobre_____a. Agora, assinale a alternativa com a sequência correta.', options:['S, Z, S, Z, S, Z','Z, S, Z, S, Z, S','S, S, Z, Z, S, Z','S, S, S, Z, Z, Z','Z, Z, S, S, Z, Z'], _correct:'S, S, Z, Z, S, Z', points:1 },
+    { id:'q47', text:'Assinale a alternativa correta considerando os homônimos.', options:['A sela do prisioneiro estava aberta e ele fugiu num cavalo sem cela.','Você precisa se apreçar em apressar os produtos.','Vamos pelo senso comum e considerar os dados oficiais do último censo do IBGE.','A seção de cinema começa às 19h. Então, passe na sessão de doces da loja e compre chocolates para comermos enquanto vemos o filme.','A cessão dos brinquedos estava muito desorganizada.'], _correct:'Vamos pelo senso comum e considerar os dados oficiais do último censo do IBGE.', points:1 },
+    { id:'q48', text:'Assinale a alternativa incorreta considerando as palavras parônimas.', options:['O policial precisa infligir a lei e penalizar os que insistem em infringir as leis do nosso país.','Choveu tanto que chegou a empossar o local e não houve possibilidade de empoçar o prefeito.','Gostaria de lhe dar os cumprimentos. Você deixou os comprimentos dos vestidos perfeitos.','A seção eleitoral que eu voto fica no colégio que meu filho estuda.','A seção de doces da loja foi alagada.'], _correct:'Choveu tanto que chegou a empossar o local e não houve possibilidade de empoçar o prefeito.', points:1 },
+    { id:'q49', text:'Complete as frases com por que, por quê, porque ou porquê. * Pode me dizer .................... fez isso? * ................ não disseste a verdade? * Foi difícil compreender o ................. de sua atitude inesperada. * Eu tenho medo de barata porque fiquei traumatizada desde a infância. Qual alternativa corresponde ao preenchimento dos espaços nas frases?', options:['Por que, Por quê, porque, porquê.','Por que, Por que, porquê, porque.','Porque, Porquê, por que, por que.','Por quê, Porque, por que, por quê.','Porque, Porque, por quê, porquê.'], _correct:'Por quê, Porque, por que, por quê.', points:1 },
+    { id:'q50', text:'Complete as frases com: porque, porquê, por que e por quê. * Ninguém compreendeu o __________ do cancelamento do jantar. * Apenas fiz isso __________ eu quis. * Ontem houve greve de professores. Você sabe __________? * _____________ você não me procurou eu vim atrás. Qual alternativa corresponde aos espaços que você completou?', options:['Porquê, porque, por quê, Porque.','Porquê, por que, por quê, Porque.','Por quê, por que, porquê, Por que.','Porque, porquê, por que, Por quê.','Porque, porque, porque, Porquê.'], _correct:'Porquê, porque, por quê, Porque.', points:1 }
+];
+
+// =============================================================================
+// ESTADO DA APLICAÇÃO
+// =============================================================================
+const STORAGE_KEY = 'avaliacao_gm_2026';
+
+const state = {
+    step: 'register',
+    student: { name:'', operationName:'', class:'', email:'' },
+    quiz: {
+        startTime: null,
+        endTime: null,
+        timerInterval: null,
+        timeLeft: 7200,
+        answers: {},      // { qId: textoResposta }
+        score: 0,
+        currentIndex: 0,
+        flagged: new Set(),
+        fraudAttempts: []
+    }
+};
+
+// Questões embaralhadas (instância de sessão)
+let questions = [];
+
+// Configurações Telegram
+const TELEGRAM_CHAT_ID = "1290354334";
+const TELEGRAM_BOT_TOKEN = "8408925795:AAFpRIFVZtmur-7bxDAlshnGHtn5h03IHcI"; 
+
+// =============================================================================
+// AUTO SAVE / RESTORE
+// =============================================================================
+function saveToStorage() {
+    if (state.step !== 'quiz') return;
+    const snapshot = {
+        student: state.student,
+        answers: state.quiz.answers,
+        timeLeft: state.quiz.timeLeft,
+        startTime: state.quiz.startTime ? state.quiz.startTime.toISOString() : null,
+        questionOrder: questions.map(q => q.id),
+        fraudAttempts: state.quiz.fraudAttempts,
+        flagged: Array.from(state.quiz.flagged)
+    };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch(e) {}
+}
+
+function loadFromStorage() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch(e) { return null; }
+}
+
+function clearStorage() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+}
+
+// =============================================================================
+// ANTI-FRAUDE
+// =============================================================================
+let fraudOverlayOpen = false;
+
+function registerFraudAttempt(reason) {
+    const entry = { reason, time: new Date().toLocaleString('pt-BR') };
+    state.quiz.fraudAttempts.push(entry);
+    saveToStorage();
+    showFraudOverlay(reason);
+}
+
+function showFraudOverlay(reason) {
+    fraudOverlayOpen = true;
+    document.getElementById('fraud-reason').textContent = reason;
+    document.getElementById('fraud-overlay').classList.add('active');
+}
+
+function closeFraudOverlay() {
+    fraudOverlayOpen = false;
+    document.getElementById('fraud-overlay').classList.remove('active');
+}
+
+// Troca de aba / minimização
+document.addEventListener('visibilitychange', () => {
+    if (state.step === 'quiz' && document.hidden) {
+        registerFraudAttempt('Você saiu da aba da prova. Tentativa registrada.');
+    }
+});
+
+// Teclas suspeitas (F12, Ctrl+U, Ctrl+Shift+I, Ctrl+P, PrintScreen)
+document.addEventListener('keydown', (e) => {
+    if (state.step !== 'quiz') return;
+    const blocked = e.key === 'F12'
+        || (e.ctrlKey && ['u','U','i','I','j','J','p','P','s','S'].includes(e.key))
+        || (e.ctrlKey && e.shiftKey && ['i','I','j','J','c','C'].includes(e.key))
+        || e.key === 'PrintScreen';
+    if (blocked) {
+        e.preventDefault();
+        registerFraudAttempt('Tentativa de abrir ferramentas de desenvolvedor ou imprimir.');
+    }
+});
+
+// Bloqueio de menu de contexto (botão direito)
+document.addEventListener('contextmenu', (e) => {
+    if (state.step === 'quiz') {
+        e.preventDefault();
+        registerFraudAttempt('Clique com botão direito bloqueado durante a prova.');
+    }
+});
+
+// Proteção contra refresh: beforeunload
+window.addEventListener('beforeunload', (e) => {
+    if (state.step === 'quiz') {
+        saveToStorage();
+        e.preventDefault();
+        e.returnValue = 'Sua prova está em andamento. Tem certeza que deseja sair?';
+        return e.returnValue;
+    }
+});
+
+// Prevenir botão voltar
+history.pushState(null, null, location.href);
+window.addEventListener('popstate', () => {
+    if (state.step === 'quiz') {
+        history.pushState(null, null, location.href);
+        registerFraudAttempt('Tentativa de voltar no navegador durante a prova.');
+    }
+});
+
+// =============================================================================
+// MODAL CUSTOMIZADO
+// =============================================================================
+function showModal(title, message, hasCancel, onConfirm) {
+    const id = 'modal-' + Date.now();
+    const el = document.createElement('div');
+    el.id = id;
+    el.className = 'fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 fade-in px-4';
+    el.innerHTML = `
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div class="p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-2">${title}</h3>
+                <p class="text-gray-600 text-base leading-relaxed">${message}</p>
+            </div>
+            <div class="bg-gray-50 px-6 py-4 flex justify-end items-center gap-2">
+                ${hasCancel ? `<button onclick="document.getElementById('${id}').remove()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>` : ''}
+                <button id="${id}-ok" class="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow">OK</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById(`${id}-ok`).onclick = () => {
+        el.remove();
+        if (onConfirm) onConfirm();
+    };
+}
+
+// =============================================================================
+// EMBARALHAMENTO
+// =============================================================================
+function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+function prepareQuestions(orderIds) {
+    // Embaralha questões. Se orderIds fornecido, mantém ordem (restore).
+    let qs = rawQuestions.map(q => ({
+        ...q,
+        options: shuffle(q.options) // embaralha alternativas também
+    }));
+    if (orderIds) {
+        const map = Object.fromEntries(qs.map(q => [q.id, q]));
+        qs = orderIds.map(id => map[id]).filter(Boolean);
+    } else {
+        qs = shuffle(qs);
+    }
+    return qs;
+}
+
+// =============================================================================
+// RELATÓRIO PDF
+// =============================================================================
+async function generateReportHTML() {
+    const questionsHtml = await Promise.all(questions.map(async (q, i) => {
+        const userAnswer = state.quiz.answers[q.id];
+        const isCorrect = userAnswer ? await checkAnswer(q.id, userAnswer) : false;
+        const colorStyle = isCorrect ? 'color:#047857;' : 'color:#B91C1C;';
+        const icon = isCorrect ? '✓' : '✗';
+        // Busca o texto correto via rawQuestions para o PDF
+        const rq = rawQuestions.find(r => r.id === q.id);
+        return `
+            <div style="margin-bottom:14px;border-bottom:1px solid #e5e7eb;padding-bottom:10px;page-break-inside:avoid;">
+                <p style="font-weight:bold;margin-bottom:4px;color:#1f2937;">${i+1}. ${q.text}</p>
+                <p style="margin:0;font-size:14px;">Sua resposta: <span style="${colorStyle}font-weight:bold;">[${icon}] ${userAnswer || 'Não respondida'}</span></p>
+                ${!isCorrect ? `<p style="margin:3px 0 0;font-size:13px;color:#4b5563;">Correta: <strong>${rq._correct}</strong></p>` : ''}
+            </div>
+        `;
+    }));
+    const fraudLog = state.quiz.fraudAttempts.length > 0
+        ? `<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:12px;margin-bottom:20px;">
+               <p style="font-weight:bold;color:#B91C1C;margin:0 0 6px;">⚠️ Tentativas de Fraude Registradas (${state.quiz.fraudAttempts.length})</p>
+               ${state.quiz.fraudAttempts.map(a => `<p style="font-size:12px;color:#7F1D1D;margin:2px 0;">• [${a.time}] ${a.reason}</p>`).join('')}
+           </div>`
+        : `<p style="color:#047857;font-size:13px;background:#F0FDF4;padding:8px;border-radius:6px;margin-bottom:20px;">✓ Nenhuma tentativa de fraude detectada.</p>`;
+
+    return `
+        <div id="pdf-report" style="padding:20px;font-family:'Helvetica','Arial',sans-serif;color:#333;width:100%;max-width:800px;">
+            <div style="text-align:center;margin-bottom:20px;border-bottom:2px solid #2563EB;padding-bottom:15px;">
+                <h1 style="margin:0;font-size:22px;color:#2563EB;text-transform:uppercase;">Relatório de Avaliação</h1>
+                <p style="margin:5px 0;color:#6B7280;">Curso de Formação I · 2026</p>
+            </div>
+            <div style="background:#F3F4F6;padding:16px;border-radius:8px;margin-bottom:20px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;"><strong>Aluno:</strong> ${state.student.name}</td><td style="padding:4px 0;"><strong>Operação:</strong> ${state.student.operationName}</td></tr>
+                    <tr><td style="padding:4px 0;"><strong>Turma:</strong> ${state.student.class}</td><td style="padding:4px 0;"><strong>Email:</strong> ${state.student.email}</td></tr>
+                    <tr><td style="padding:4px 0;font-size:18px;color:#2563EB;"><strong>Nota:</strong> ${state.quiz.score} / 10,0</td><td style="padding:4px 0;"><strong>Data:</strong> ${new Date().toLocaleString('pt-BR')}</td></tr>
+                </table>
+            </div>
+            ${fraudLog}
+            <div>${questionsHtml.join('')}</div>
+            <div style="margin-top:24px;text-align:center;font-size:12px;color:#9CA3AF;border-top:1px solid #E5E7EB;padding-top:10px;">
+                Gerado automaticamente pelo Sistema de Avaliação Online
+            </div>
+        </div>
+    `;
+}
+
+// =============================================================================
+// TIMER
+// =============================================================================
+function startTimer() {
+    updateTimerDisplay();
+    state.quiz.timerInterval = setInterval(() => {
+        state.quiz.timeLeft--;
+        updateTimerDisplay();
+        // Auto-save a cada 30 segundos
+        if (state.quiz.timeLeft % 30 === 0) saveToStorage();
+        if (state.quiz.timeLeft <= 0) finishQuiz(true);
+    }, 1000);
+}
+
+function updateTimerDisplay() {
+    const display = document.getElementById('timer-display');
+    if (!display) return;
+    const m = Math.floor(state.quiz.timeLeft / 60).toString().padStart(2,'0');
+    const s = (state.quiz.timeLeft % 60).toString().padStart(2,'0');
+    display.textContent = `${m}:${s}`;
+    if (state.quiz.timeLeft < 300) display.classList.add('text-red-600','animate-pulse');
+    else display.classList.remove('text-red-600','animate-pulse');
+}
+
+// =============================================================================
+// RENDERIZAÇÃO — CADASTRO
+// =============================================================================
+function init() {
+    history.pushState(null, null, location.href);
+
+    // Verificar sessão salva
+    const saved = loadFromStorage();
+    if (saved && saved.startTime) {
+        showModal(
+            'Sessão Anterior Encontrada',
+            `Encontramos uma prova em andamento de <strong>${saved.student.name}</strong>. Deseja continuar de onde parou?`,
+            true,
+            () => restoreSession(saved)
+        );
+        // Preenche campos com dados salvos para o caso de "Cancelar"
+        state.student = saved.student;
+    }
+    renderRegister();
+}
+
+async function restoreSession(saved) {
+    state.student = saved.student;
+    state.quiz.answers = saved.answers || {};
+    state.quiz.fraudAttempts = saved.fraudAttempts || [];
+    state.quiz.flagged = new Set(saved.flagged || []);
+    state.quiz.startTime = new Date(saved.startTime);
+    state.quiz.timeLeft = saved.timeLeft;
+    state.step = 'quiz';
+
+    questions = prepareQuestions(saved.questionOrder);
+    await precomputeHashes(questions);
+
+    startTimer();
+    renderQuiz();
+}
+
+function renderRegister() {
+    document.getElementById('content').innerHTML = `
+        <div class="space-y-4 fade-in">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">Dados do Aluno</h2>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Nome Completo</label>
+                <input type="text" id="input-name" value="${state.student.name}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-3 focus:ring-blue-500 focus:border-blue-500" placeholder="Ex: João da Silva">
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Nome de Operação</label>
+                    <input type="text" id="input-operationname" value="${state.student.operationName}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-3" placeholder="Ex: Falcão">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Turma</label>
+                    <input type="text" id="input-class" value="${state.student.class}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-3" placeholder="Segunda Matutino">
+                </div>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">E-mail</label>
+                <input type="email" id="input-email" value="${state.student.email}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-3" placeholder="Ex: joao@exemplo.com">
+            </div>
+            <div class="pt-4">
+                <button onclick="handleRegister()" class="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-md">
+                    Iniciar Avaliação <i class="fas fa-arrow-right ml-2"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function handleRegister() {
+    const name = document.getElementById('input-name').value.trim();
+    const operationName = document.getElementById('input-operationname').value.trim();
+    const turm = document.getElementById('input-class').value.trim();
+    const email = document.getElementById('input-email').value.trim();
+    if (!name || !operationName || !turm || !email) {
+        showModal('Campos Obrigatórios', 'Por favor, preencha todos os campos antes de continuar.', false);
+        return;
+    }
+    state.student = { name, operationName, class: turm, email };
+    renderConfirm();
+}
+
+// =============================================================================
+// RENDERIZAÇÃO — CONFIRMAÇÃO
+// =============================================================================
+function renderConfirm() {
+    document.getElementById('content').innerHTML = `
+        <div class="fade-in text-center space-y-6">
+            <div class="text-6xl text-blue-500"><i class="fas fa-file-alt"></i></div>
+            <h2 class="text-2xl font-bold text-gray-800">Instruções da Avaliação</h2>
+            <div class="text-left bg-blue-50 p-4 rounded-lg text-sm text-blue-900 space-y-2">
+                <p><i class="fas fa-clock mr-2"></i>Você terá <strong>2 horas</strong> para responder.</p>
+                <p><i class="fas fa-list-ol mr-2"></i>A prova contém <strong>${rawQuestions.length} questões</strong> embaralhadas.</p>
+                <p><i class="fas fa-shield-alt mr-2"></i>Troca de aba, botão direito, F12 e impressão são <strong>bloqueados</strong>.</p>
+                <p><i class="fas fa-save mr-2"></i>Suas respostas são salvas automaticamente.</p>
+                <p><i class="fas fa-exclamation-triangle mr-2"></i>Tentativas de fraude são registradas e enviadas ao instrutor.</p>
+            </div>
+            <p class="text-gray-600">Boa sorte, <strong>${state.student.name}</strong>!</p>
+            <button onclick="startQuiz()" class="w-full bg-green-600 text-white p-4 rounded-lg font-bold hover:bg-green-700 transition shadow-lg text-lg animate-bounce">
+                COMEÇAR AGORA <i class="fas fa-play ml-2"></i>
+            </button>
+        </div>
+    `;
+}
+
+// =============================================================================
+// QUIZ — INÍCIO
+// =============================================================================
+async function startQuiz() {
+    questions = prepareQuestions(null);
+    await precomputeHashes(questions);
+    state.quiz.startTime = new Date();
+    state.quiz.currentIndex = 0;
+    state.step = 'quiz';
+    startTimer();
+    renderQuiz();
+    saveToStorage();
+}
+
+// =============================================================================
+// QUIZ — RENDERIZAÇÃO DA QUESTÃO ATUAL
+// =============================================================================
+function renderQuiz() {
+    const q = questions[state.quiz.currentIndex];
+    const idx = state.quiz.currentIndex;
+    const total = questions.length;
+    const answered = Object.keys(state.quiz.answers).length;
+    const pct = Math.round((answered / total) * 100);
+    const isFlagged = state.quiz.flagged.has(q.id);
+    const savedAnswer = state.quiz.answers[q.id] || null;
+
+    // Nav de questões (bolinhas)
+    const navBtns = questions.map((qq, i) => {
+        let cls = 'q-nav-btn w-8 h-8 rounded-full border-2 border-gray-300 text-xs font-bold flex items-center justify-center cursor-pointer hover:border-blue-400';
+        if (i === idx) cls += ' current border-blue-600 text-blue-600';
+        if (state.quiz.answers[qq.id]) cls += ' answered';
+        if (state.quiz.flagged.has(qq.id)) cls += ' flagged';
+        return `<button onclick="goToQuestion(${i})" class="${cls}">${i+1}</button>`;
+    }).join('');
+
+    // Alternativas
+    const optionsHtml = q.options.map((opt, i) => {
+        const isSelected = savedAnswer === opt;
+        const letters = ['A','B','C','D','E'];
+        return `
+            <label class="flex items-start space-x-3 p-3 border-2 rounded-lg cursor-pointer transition ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'}">
+                <input type="radio" name="q-${q.id}" value="${opt.replace(/"/g, '&quot;')}" class="hidden" ${isSelected ? 'checked' : ''} onchange="saveAnswer('${q.id}', this.value)">
+                <span class="flex-shrink-0 w-7 h-7 rounded-full ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'} flex items-center justify-center text-xs font-bold">${letters[i]}</span>
+                <span class="text-gray-700 text-sm pt-0.5">${opt}</span>
+            </label>
+        `;
+    }).join('');
+
+    document.getElementById('content').innerHTML = `
+        <div class="fade-in">
+            <!-- Header fixo com timer e progresso -->
+            <div class="sticky top-0 bg-white z-10 border-b pb-3 mb-4 shadow-sm pt-1">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Op: ${state.student.operationName}</span>
+                    <div class="flex items-center text-lg font-mono font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded">
+                        <i class="fas fa-stopwatch mr-2 text-sm"></i>
+                        <span id="timer-display">--:--</span>
+                    </div>
+                </div>
+                <!-- Barra de progresso -->
+                <div class="w-full bg-gray-200 rounded-full h-2 mb-1">
+                    <div class="progress-bar-inner bg-blue-600 h-2 rounded-full" style="width:${pct}%"></div>
+                </div>
+                <p class="text-xs text-gray-400 text-right">${answered}/${total} respondidas</p>
+            </div>
+
+            <!-- Mapa de questões -->
+            <div class="mb-4">
+                <p class="text-xs text-gray-500 mb-2 font-medium">NAVEGAÇÃO</p>
+                <div class="flex flex-wrap gap-1.5">
+                    ${navBtns}
+                </div>
+                <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                    <span><span class="inline-block w-3 h-3 rounded-full bg-blue-600 mr-1"></span>Respondida</span>
+                    <span><span class="inline-block w-3 h-3 rounded-full bg-yellow-400 mr-1"></span>Marcada</span>
+                    <span><span class="inline-block w-3 h-3 rounded-full border-2 border-gray-300 mr-1"></span>Pendente</span>
+                </div>
+            </div>
+
+            <!-- Questão -->
+            <div class="mb-6">
+                <div class="flex justify-between items-start mb-3">
+                    <p class="font-bold text-gray-800 text-base leading-relaxed">
+                        <span class="text-blue-600 mr-1">${idx+1}.</span> ${q.text}
+                    </p>
+                </div>
+                <div class="space-y-2" id="options-container">
+                    ${optionsHtml}
+                </div>
+            </div>
+
+            <!-- Controles de navegação -->
+            <div class="flex items-center justify-between pt-4 border-t gap-2">
+                <button onclick="prevQuestion()" ${idx === 0 ? 'disabled' : ''} class="px-4 py-2 rounded-lg border font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                    <i class="fas fa-chevron-left mr-1"></i> Anterior
+                </button>
+
+                <button onclick="toggleFlag('${q.id}')" class="px-3 py-2 rounded-lg border font-semibold text-sm ${isFlagged ? 'bg-yellow-400 text-white border-yellow-400' : 'text-yellow-500 border-yellow-300 hover:bg-yellow-50'} transition">
+                    <i class="fas fa-flag mr-1"></i> ${isFlagged ? 'Marcada' : 'Marcar'}
+                </button>
+
+                ${idx < total - 1
+                    ? `<button onclick="nextQuestion()" class="px-4 py-2 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 transition">Próxima <i class="fas fa-chevron-right ml-1"></i></button>`
+                    : `<button onclick="confirmFinish()" class="px-4 py-2 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700 transition">Finalizar <i class="fas fa-check ml-1"></i></button>`
+                }
+            </div>
+
+            <!-- Botão finalizar sempre disponível -->
+            <div class="mt-4">
+                <button onclick="confirmFinish()" class="w-full border-2 border-red-300 text-red-600 p-3 rounded-lg font-bold hover:bg-red-50 transition text-sm">
+                    <i class="fas fa-paper-plane mr-2"></i> ENTREGAR PROVA
+                </button>
+            </div>
+        </div>
+    `;
+    updateTimerDisplay();
+    window.scrollTo(0,0);
+}
+
+function saveAnswer(questionId, answer) {
+    state.quiz.answers[questionId] = answer;
+    saveToStorage();
+    // Re-renderiza para atualizar visual de seleção e barra de progresso
+    renderQuiz();
+}
+
+function goToQuestion(i) {
+    state.quiz.currentIndex = i;
+    renderQuiz();
+}
+
+function nextQuestion() {
+    if (state.quiz.currentIndex < questions.length - 1) {
+        state.quiz.currentIndex++;
+        renderQuiz();
+    }
+}
+
+function prevQuestion() {
+    if (state.quiz.currentIndex > 0) {
+        state.quiz.currentIndex--;
+        renderQuiz();
+    }
+}
+
+function toggleFlag(qId) {
+    if (state.quiz.flagged.has(qId)) state.quiz.flagged.delete(qId);
+    else state.quiz.flagged.add(qId);
+    saveToStorage();
+    renderQuiz();
+}
+
+function confirmFinish() {
+    const answered = Object.keys(state.quiz.answers).length;
+    const total = questions.length;
+    const unanswered = total - answered;
+    const flagged = state.quiz.flagged.size;
+    let msg = `Tem certeza que deseja entregar a prova?`;
+    if (unanswered > 0) msg += `<br><br><strong class="text-red-600">${unanswered} questão(ões) sem resposta.</strong>`;
+    if (flagged > 0) msg += `<br><span class="text-yellow-600">${flagged} questão(ões) marcada(s) para revisão.</span>`;
+    showModal('Entregar Prova', msg, true, () => finishQuiz());
+}
+
+// =============================================================================
+// FINALIZAÇÃO
+// =============================================================================
+function finishQuiz(isTimeout = false) {
+    clearInterval(state.quiz.timerInterval);
+    state.quiz.endTime = new Date();
+    state.step = 'finished';
+    if (isTimeout) {
+        showModal('Tempo Esgotado!', 'Seu tempo acabou. As respostas salvas serão enviadas automaticamente.', false, () => proceedToSend());
+    } else {
+        proceedToSend();
+    }
+}
+
+function proceedToSend() {
+    renderSending();
+    calculateScore().then(() => {
+        sendToTelegram().catch(() => renderResult(false));
+    });
+}
+
+async function calculateScore() {
+    let correct = 0;
+    for (const q of questions) {
+        const ans = state.quiz.answers[q.id];
+        if (ans && await checkAnswer(q.id, ans)) correct++;
+    }
+    const finalScore = (correct / questions.length) * 10;
+    state.quiz.score = finalScore.toFixed(1).replace('.', ',');
+}
+
+function renderSending() {
+    document.getElementById('content').innerHTML = `
+        <div class="flex flex-col items-center justify-center py-12 fade-in">
+            <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div>
+            <h2 class="text-xl font-semibold text-gray-700">Gerando relatório e enviando...</h2>
+            <p class="text-gray-500 text-sm">Isso pode levar alguns segundos.</p>
+        </div>
+    `;
+}
+
+async function sendToTelegram() {
+    const duration = Math.floor((state.quiz.endTime - state.quiz.startTime) / 1000);
+    const minutes = Math.floor(duration / 60);
+    const seconds = duration % 60;
+    const fraudInfo = state.quiz.fraudAttempts.length > 0
+        ? `\n⚠️ Tentativas de fraude: ${state.quiz.fraudAttempts.length}`
+        : '\n✅ Sem tentativas de fraude';
+
+    const message = `📝 AVALIAÇÃO\n\n👤 Aluno: ${state.student.name}\n🦅 Operação: ${state.student.operationName}\n🏫 Turma: ${state.student.class}\n✅ Nota: ${state.quiz.score} / 10,0\n⏱️ Tempo: ${minutes}m ${seconds}s${fraudInfo}\n\n*Relatório detalhado em anexo.*`;
+
+    // Overlay de loading
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, { position:'fixed', inset:'0', background:'#fff', zIndex:'99998', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' });
+    overlay.innerHTML = `<div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div><h2 class="text-xl font-semibold text-gray-700">Gerando PDF...</h2><p class="text-sm text-gray-500">Aguarde.</p>`;
+    document.body.appendChild(overlay);
+
+    const appContainer = document.getElementById('app-container');
+    appContainer.style.display = 'none';
+
+    const reportContainer = document.createElement('div');
+    reportContainer.innerHTML = await generateReportHTML();
+    Object.assign(reportContainer.style, { width:'100%', maxWidth:'800px', margin:'0 auto', background:'#fff', padding:'20px', position:'relative', zIndex:'1', color:'#000' });
+    document.body.appendChild(reportContainer);
+    window.scrollTo(0,0);
+    await new Promise(r => setTimeout(r, 1500));
+
+    try {
+        const opt = {
+            margin: 10,
+            filename: `Avaliacao_${state.student.operationName || 'Aluno'}.pdf`,
+            image: { type:'jpeg', quality:0.98 },
+            html2canvas: { scale:2, useCORS:true, scrollX:0, scrollY:0 },
+            jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
+        };
+        const pdfBlob = await html2pdf().set(opt).from(reportContainer).output('blob');
+
+        if (document.body.contains(reportContainer)) document.body.removeChild(reportContainer);
+        appContainer.style.display = '';
+        if (document.body.contains(overlay)) document.body.removeChild(overlay);
+
+        const formData = new FormData();
+        formData.append('chat_id', TELEGRAM_CHAT_ID);
+        formData.append('caption', message);
+        formData.append('document', pdfBlob, `Avaliacao_${state.student.operationName || 'Aluno'}.pdf`);
+
+        renderSending();
+        const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, { method:'POST', body:formData });
+
+        clearStorage(); // Limpa sessão após envio bem-sucedido
+        renderResult(response.ok);
+    } catch(err) {
+        console.error(err);
+        if (document.body.contains(reportContainer)) document.body.removeChild(reportContainer);
+        appContainer.style.display = '';
+        if (document.body.contains(overlay)) document.body.removeChild(overlay);
+        renderResult(false);
+    }
+}
+
+// =============================================================================
+// TELA DE RESULTADO
+// =============================================================================
+function renderResult(telegramSuccess) {
+    const scoreNum = parseFloat(state.quiz.score.replace(',','.'));
+    let color = 'text-green-600', icon = 'fa-check-circle';
+    if (scoreNum < 5) { color = 'text-red-600'; icon = 'fa-times-circle'; }
+    else if (scoreNum < 7) { color = 'text-yellow-600'; icon = 'fa-exclamation-circle'; }
+
+    const statusMsg = telegramSuccess
+        ? '<p class="text-green-600 font-medium bg-green-50 p-2 rounded mb-4"><i class="fas fa-check mr-1"></i> Relatório PDF enviado ao comando com sucesso.</p>'
+        : '<p class="text-orange-600 font-medium bg-orange-50 p-2 rounded mb-4 text-sm"><i class="fas fa-exclamation-triangle mr-1"></i> Nota registrada, mas houve falha no envio. Avise seu instrutor.</p>';
+
+    const fraudMsg = state.quiz.fraudAttempts.length > 0
+        ? `<p class="text-red-600 bg-red-50 p-2 rounded mb-4 text-sm"><i class="fas fa-shield-alt mr-1"></i> <strong>${state.quiz.fraudAttempts.length} tentativa(s) suspeita(s)</strong> foram registradas e reportadas.</p>`
+        : '';
+
+    document.getElementById('content').innerHTML = `
+        <div class="text-center fade-in py-6">
+            <div class="mb-6"><i class="fas ${icon} text-6xl ${color}"></i></div>
+            <h2 class="text-3xl font-bold text-gray-800 mb-2">Avaliação Concluída</h2>
+            ${statusMsg}
+            ${fraudMsg}
+            <div class="bg-gray-100 rounded-xl p-8 max-w-sm mx-auto shadow-inner">
+                <p class="text-gray-500 uppercase text-xs font-bold tracking-widest mb-2">Sua Nota Final</p>
+                <p class="text-5xl font-extrabold ${color}">${state.quiz.score}</p>
+                <p class="text-gray-400 text-sm mt-2">de 10,0</p>
+            </div>
+            <div class="mt-8 text-sm text-gray-400">
+                <p>Obrigado pela participação!</p>
+                <p>Você pode fechar esta janela.</p>
+            </div>
+        </div>
+    `;
+}
+
+// =============================================================================
+// INICIALIZAR
+// =============================================================================
+init();
+</script>
+</body>
+</html>
